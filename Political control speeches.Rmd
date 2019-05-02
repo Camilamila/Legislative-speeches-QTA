@@ -1,0 +1,493 @@
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Data description and cleaning
+
+The data corresponds to all the Congressional Speeches of ordinary sessions in the first year of the Costa Rican Congress, from the 1st of May 2018 to the 30th of April 2019.  The Congressional Speeches were downloaded from the [Costarican Congress website](http://www.asamblea.go.cr/glcp/SitePages/ConsultaActasPlenario.aspx).  From each document, I extracted the part of the debate called "Control Político", which is a 'free debate' time in Congress where legislators can talk about topics of their own interest.  In comparisson to ther spaces of debate in Congress, where legislators discuss specific law proposals and projects, Political Control in Congress allows legislators to discuss their own topics, which might reflect their own interests.  
+
+```{r message=FALSE, error=FALSE, warning=FALSE}
+#Set working directory
+setwd("/Users/camilasalazar/Documents/LSE/MY459/actas_plenario/")
+
+#load packages
+library(readtext)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(qdapRegex)
+library(quanteda)
+library(topicmodels)
+library(refinr)
+library(readxl)
+library(ggplot2)
+
+files<-list.files(pattern =".docx")
+#Read all texts in a single file
+actas<-readtext(files)
+
+#Clean text
+actas$text<-gsub("\n", " ", actas$text, fixed = FALSE)
+actas$text<-gsub("-", " ", actas$text, fixed = FALSE)
+actas$text<-gsub("Presidente a. í.", "Presidente ai", actas$text, fixed = FALSE)
+actas$text<-gsub("Presidenta a. í.", "Presidenta ai", actas$text, fixed = FALSE)
+
+#Removes repeated whitespace
+actas$text<-str_squish(actas$text)
+
+#Identify documents with "control politico"
+actas<-actas%>%
+  mutate(control=ifelse(grepl("CONTROL POLÍTICO", text, fixed=TRUE), 1, 0),
+         presidenta=ifelse(grepl("Carolina Hidalgo Herrera Presidenta", text, fixed=TRUE), 1, 0))%>%
+  filter(control==1)%>%
+  mutate(end=rm_between(text, "CONTROL POLÍTICO PAGEREF", "PAGEREF", extract=TRUE))
+
+#Corrections in text after manual checks
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-129.docx"]<-"SEGUNDA PARTE"
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-24 .docx"]<-"Hemos finalizado entonces el espacio para control político"
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-48 .docx"]<-"se levanta la sesión"
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-44 .docx"]<-"se levanta la sesión"
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-69 .docx"]<-"se levanta la sesión"
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-112.docx"]<-"Hemos terminado entonces el control político"
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-111.docx"]<-"presentado dos mociones de orden a la mesa principal"
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-118.docx"]<-"Hemos finalizado entonces con la sección de control político."
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-126.docx"]<-"presentado una moción que solicito a la segunda secretaria se sirva leer."
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-137.docx"]<-"finalizado la sección del control político."
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-149.docx"]<-"Hemos finalizado, entonces, la sección de control político."
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-150.docx"]<-"Hemos finalizado entonces la sección de control político."
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-18 .docx"]<-"Se les informa a las señoras y señores diputados que el diputado Benavides Jiménez retiró la moción"
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-19 .docx"]<-"presentado a la mesa principal una moción de orden"
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-23 .docx"]<-"Tengo una moción de orden en este momento que voy a pedir a la señora diputada, segunda secretaria, que haga lectura."
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-25 .docx"]<-"Les ruego, por favor, a los jefes de fracción se acerquen a la mesa principal, y a las subjefaturas de fracción."
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-26 .docx"]<-"Se ha presentado una moción a la mesa principal, la cual le solicito al primer secretario, por favor, se sirva leerla."
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-29 .docx"]<-"Se han presentado a la mesa principal dos mociones de orden"
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-43 .docx"]<-"Seguidamente, resoluciones de la Sala Constitucional de la Corte Suprema de Justicia."
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-47 .docx"]<-"Damos, entonces, por finalizada la sección de control político"
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-59 .docx"]<-"Se ha presentado a la mesa principal una moción de orden"
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-66 .docx"]<-"se han presentado tres mociones de orden"
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-71 .docx"]<-"Ha finalizado entonces la sección de control político."
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-76 .docx"]<-"Finalizamos con este la sección de control político"
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-77 .docx"]<-"Se ha presentado a la mesa principal una moción de orden"
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-83 .docx"]<-"Se han presentado a la mesa principal dos mociones de orden, las cuales voy a proceder con su lectura."
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-84 .docx"]<-"Finalizamos, entonces, la sección del control político."
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-85 .docx"]<-"Hemos finalizado, entonces, el control político."
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-99 .docx"]<-"Hemos finalizado entonces la sección del control político."
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-115 .docx"]<-"Se ha presentado una moción de orden de varios señores diputados y diputadas"
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-88 .docx"]<-"Se han presentado varias mociones de orden"
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-46 .docx"]<-"Se ha presentado a la mesa principal una moción de orden"
+actas$end[actas$doc_id=="2018-2019-PLENARIO-SESION-56 .docx"]<-"Hemos finalizado entonces la sección del control político"
+actas$end2<-gsub('^_Toc.*[0-9]\\s', "", actas$end, fixed=FALSE)
+actas$end2<-gsub("ASUNTOS DE CONTROL, FISCALIZACIÓN Y CONTENIDO POLÍTICO", "ASUNTOS DE CONTROL", actas$end2)
+
+#Create new variable just with CP text
+for (i in 1:length(actas$text)){
+  newt<-rm_between(actas$text[i],
+                   "CONTROL POLÍTICO ", actas$end2[i] , extract=TRUE)
+  if (length(newt[[1]]) == 2){
+  actas$newtext[[i]]<-newt[[1]][2]
+  }
+  else {
+    actas$newtext[[i]]<-newt[[1]][1]
+  }
+  message(i)
+}
+
+#Fix observations, after manual checks
+for (i in c(51, 64, 79)){
+  newt<-rm_between(actas$text[i],
+                   "CONTROL POLÍTICO [^PAGEREF]", actas$end2[i], extract=TRUE, fixed=FALSE)
+  if (length(newt[[1]]) == 2){
+    actas$newtext[[i]]<-newt[[1]][2]
+  }
+  else {
+    actas$newtext[[i]]<-newt[[1]][1]
+  }
+  message(i)
+}
+
+##Extract date
+for (i in 1:length(actas$text)){
+  date1<-rm_between(actas$text[i],
+                   "ORDINARIA N.º ", "PRIMERA LEGISLATURA" , extract=TRUE)
+    actas$date[[i]]<-date1[[1]][1]
+  message(i)
+}
+
+actas$date<-gsub(" de ", "/", actas$date)
+actas<-actas%>%
+  separate(date, into=c("a", "d", "date"), sep = " ", remove = F)
+actas<-actas[,-c(8, 9)]
+actas$date<-gsub("enero", "01", actas$date)
+actas$date<-gsub("febrero", "02", actas$date)
+actas$date<-gsub("marzo", "03", actas$date)
+actas$date<-gsub("abril", "04", actas$date)
+actas$date<-gsub("mayo", "05", actas$date)
+actas$date<-gsub("junio", "06", actas$date)
+actas$date<-gsub("julio", "07", actas$date)
+actas$date<-gsub("agosto", "08", actas$date)
+actas$date<-gsub("setiembre", "09", actas$date)
+actas$date<-gsub("octubre", "10", actas$date)
+actas$date<-gsub("noviembre", "11", actas$date)
+actas$date<-gsub("diciembre", "12", actas$date)
+actas$date<-gsub("1°", "1", actas$date)
+
+library(lubridate)
+actas$date<-dmy(actas$date)
+
+  
+#Extract all speeches by legislators
+speech_list<-list()
+for (i in 1:length(actas$text)){
+  speech_list[[i]]<-data.frame(unlist(rm_between(actas$newtext[i],
+                                                 "(Diputad[ao] [\\w ]{1,200}:)", "(resident[ae] [\\w ]{1,200}:)", extract=TRUE, fixed = FALSE, include.markers = TRUE)), acta=actas$doc_id[i], date=actas$date[i])
+  message(i)
+}
+speech_df<-do.call(rbind, speech_list)
+
+#Clean dataset
+speech_df<-speech_df%>%
+  rename(speech = unlist.rm_between.actas.newtext.i.....Diputad.ao.....w...1.200......)%>%
+  filter(!is.na(speech))%>%
+  mutate(legislator=str_extract(speech, "(Diputad[ao] [\\w ]{1,200}:)"))
+
+speech_df$speech<-str_remove(speech_df$speech, "(Diputad[ao] [\\w ]{1,200}:)")
+speech_df$speech<- str_remove(speech_df$speech, "(President[ae] [\\w ]{1,200}:)|(Vicepresident[ae] [\\w ]{1,200}:)")
+speech_df$legislator<-str_remove(speech_df$legislator, "(Diputad[ao] )")
+speech_df$legislator<-str_remove(speech_df$legislator, ":")
+speech_df$legislator<-str_squish(speech_df$legislator)
+
+#Cleaning legislators names: The funcion was generated with a python script that transformed Open Refine clustering algorithms
+#into an R function.  Full script can be found here: LINK
+source("clean_names.R")
+
+speech_df<-cleaning(speech_df)
+
+#Group different speeches in the same session by the same legislator 
+speech_df<-speech_df%>%
+  group_by(acta, legislator, date)%>%
+  mutate(inter=n())%>%
+  summarise(speech=paste0(speech, collapse=" "))
+
+speech_df<-speech_df[-48,]
+
+
+#Load file with party names and merge
+parties <- read_excel("parties.xlsx")
+speech_df<-left_join(speech_df, parties, by="legislator")
+
+#Add number of tokens
+speech_df$words<-ntoken(speech_df$speech)
+
+#Remove speeches with less than 100 words
+speech_df<-speech_df%>%filter(words>100)
+
+#clean name of minute (acta)
+speech_df$acta<-gsub("2018-2019-PLENARIO-SESION-", "", speech_df$acta)
+speech_df$acta<-gsub(".docx", "", speech_df$acta)
+speech_df$acta<-str_squish(speech_df$acta)
+
+#Number of sessions
+speech_df%>%group_by(acta)%>%summarise(tot=n())
+
+```
+
+## Descriptive statistics
+
+
+```{r message=FALSE, error=FALSE, warning=FALSE}
+summary(speech_df$words)
+
+#Plot distribution of words per speech
+speech_df%>%
+  ggplot(aes(x=words))+
+  geom_histogram()+
+  theme_minimal()+
+  scale_x_continuous("Number of words per speech")+
+  scale_y_continuous("Frequency")+
+  ggtitle("Speech size (number of words)")
+
+speech_df%>%
+  ggplot(aes(x=1, y=words))+
+  geom_boxplot()+
+  theme_minimal()+
+  scale_x_continuous("Number of words per speech")+
+  scale_y_continuous("Frequency")+
+  ggtitle("Distribution of word counts")
+
+#Number of speeches by party
+speech_df%>%
+  group_by(party)%>%
+  summarise(speeches=n(),
+            words=sum(words))%>%
+  arrange(desc(words))
+
+#Top legislators
+speech_df%>%
+  group_by(legislator)%>%
+  summarise(speeches=n(),
+            words=sum(words))%>%
+  arrange(desc(words))
+
+```
+
+#Create corpus and DFM
+```{r message=FALSE, error=FALSE, warning=FALSE}
+#Create a corpus
+corpus1<-corpus(speech_df, text_field = "speech")
+docnames(corpus1)<-paste(speech_df$acta, speech_df$legislator, sep="-")
+docvars(corpus1)<-speech_df$date
+
+#dfm
+dfm1<-corpus1%>%
+    tokens(remove_punct = TRUE) %>%
+    tokens_tolower() %>%
+    tokens_remove(pattern = stopwords('spanish'), padding = FALSE)%>%
+    tokens_remove(pattern ="diputad[ao]|diputad[ao]s|señora|señor|compañer[ao]|
+                  compañer[ao]s|gracias|don|doña|presidenta", valuetype= "regex")%>%
+    dfm()%>%
+    #dfm_wordstem(language = "spanish")%>%
+    dfm_trim(min_docfreq = 2, 
+                      verbose = TRUE)
+
+# delete documents that contain only zeros
+dfm1 <- dfm1[rowSums(dfm1) != 0, ]
+
+```
+
+
+#Choose the number of topics
+```{r, eval=FALSE}
+#Code taken from http://pablobarbera.com/POIR613/code/12-topic-models.html
+
+install.packages("cvTools")
+require(cvTools)
+dtm <- convert(dfm1, to="topicmodels")
+
+cvLDA <- function(Ntopics,dtm,K=10) {
+  folds<-cvFolds(nrow(dtm),K,1)
+  perplex <- rep(NA,K)
+  llk <- rep(NA,K)
+  for(i in unique(folds$which)){
+    cat(i, " ")
+    which.test <- folds$subsets[folds$which==i]
+    which.train <- {1:nrow(dtm)}[-which.test]
+    dtm.train <- dtm[which.train,]
+    dtm.test <- dtm[which.test,]
+    lda.fit <- LDA(dtm.train, k=Ntopics, method="Gibbs",
+        control = list(verbose=25L, seed = 123, burnin = 100, iter = 500))
+    perplex[i] <- perplexity(lda.fit,dtm.test)
+    llk[i] <- logLik(lda.fit)
+  }
+  return(list(K=Ntopics,perplexity=perplex,logLik=llk))
+}
+
+K <- c(5, 10, 15, 20, 25, 30, 35, 40, 45, 50)
+
+results <- list()
+
+i = 1
+for (k in K){
+    cat("\n\n\n##########\n ", k, "topics", "\n")
+    res <- cvLDA(k, dtm)
+    results[[i]] <- res
+    i = i + 1
+}
+
+
+df <- data.frame(
+    k = rep(K, each=10),
+    perp =  unlist(lapply(results, '[[', 'perplexity')),
+    loglk = unlist(lapply(results, '[[', 'logLik')),
+    stringsAsFactors=F)
+
+min(df$perp)
+## [1] 2424.736
+df$ratio_perp <- df$perp / max(df$perp)
+df$ratio_lk <- df$loglk / min(df$loglk)
+
+df <- data.frame(cbind(
+    aggregate(df$ratio_perp, by=list(df$k), FUN=mean),
+    aggregate(df$ratio_perp, by=list(df$k), FUN=sd)$x,
+    aggregate(df$ratio_lk, by=list(df$k), FUN=mean)$x,
+    aggregate(df$ratio_lk, by=list(df$k), FUN=sd)$x),
+    stringsAsFactors=F)
+names(df) <- c("k", "ratio_perp", "sd_perp", "ratio_lk", "sd_lk")
+library(reshape)
+pd <- melt(df[,c("k","ratio_perp", "ratio_lk")], id.vars="k")
+pd2 <- melt(df[,c("k","sd_perp", "sd_lk")], id.vars="k")
+pd$sd <- pd2$value
+levels(pd$variable) <- c("Perplexity", "LogLikelihood")
+
+library(grid)
+
+p <- ggplot(pd, aes(x=k, y=value, linetype=variable))
+pq <- p + geom_line() + geom_point(aes(shape=variable), 
+        fill="white", shape=21, size=1.40) +
+    geom_errorbar(aes(ymax=value+sd, ymin=value-sd), width=4) +
+    scale_y_continuous("Ratio wrt worst value") +
+    scale_x_continuous("Number of topics", 
+        breaks=K) +
+    theme_minimal() 
+pq
+```
+
+##Run the topic model with 35 topics
+```{r message=FALSE, error=FALSE, warning=FALSE}
+lda35<- LDA(dfm1, k = 35, method = "Gibbs", 
+                control = list(verbose=25L, seed = 123, burnin = 100, iter = 500))
+
+terms35 <- get_terms(lda35, 20)
+speech_df$topic2<-topics(lda35)
+
+t35<-c()
+for (i in 1:35){
+t35[i]<-paste(terms35[,i], collapse=", ")
+} 
+d35<-data.frame(round(prop.table(table(speech_df$topic2))*100,1))
+d35<-data.frame(topic=d35$Var1, freq=d35$Freq, terms=t35)
+t<-round(prop.table(table(speech_df$topic2, speech_df$party), 1)*100,1)
+
+#Add labels of topics to data frame
+speech_df$topic2label <- factor(speech_df$topic2, labels=c("Enviroment / Energy","none1", "Corruption", "Same sex marriage","Ivonne","Budget","Road infraestructure","Fiscal reform","none2","Women / Gender","Labor","Taxes","none3","Social security","Economy / markets","Coasts (Puntarenas)","Education","Coasts (Limón)", "ICE", "none4","Judiciary ", "Coasts (Guanacaste)","none5", "Children / Elderly", "Security", "Institutions", "Communities", "PAC", "none7", "Local goverments", "none8", "Economy / employment", "Public universities","Abortion", "Parliament"))
+```
+
+#Topics by party
+```{r message=FALSE, error=FALSE, warning=FALSE}
+#Topics by party
+party_total<-speech_df%>%
+  mutate(topic2label=ifelse(grepl("none[1-9]", topic2label, fixed=FALSE), "none", as.character(topic2label)))%>%
+  group_by(party, topic2label)%>%
+  summarise(total=n())%>%
+  filter(topic2label!="none")%>%
+  ungroup()%>%
+  group_by(party)%>%
+  summarise(total=n())
+
+    #Plot
+ggplot(party_total, aes(y=total, x=reorder(party, -total))) + geom_bar( stat="identity")+
+  theme_minimal()+ggtitle("Number of topics by party")+labs(y="Number of topics", x="Political Party")
+
+party_topics<-speech_df%>%
+  mutate(topic2label=ifelse(grepl("none[1-9]", topic2label, fixed=FALSE), "none", as.character(topic2label)))%>%
+  group_by(topic2label, party)%>%
+  summarise(total=n())%>%
+  mutate(perc=round(total/sum(total)*100,1))%>%
+  filter(topic2label!="none")
+
+    #Plot
+ggplot(party_topics, aes(fill=party, y=total, x=topic2label)) + geom_bar( stat="identity", position="fill")+
+  coord_flip()+scale_fill_manual(values=c("#001900", "#ff0000", "#428bca", "#9ec651","#f5b201", "#bfbfbf", "#0b0080"), name="Party")+theme_minimal()+ggtitle("Topics by party")+labs(y="Percentage", x="")
+```
+
+#Topics by date
+```{r message=FALSE, error=FALSE, warning=FALSE, fig.height=10, fig.width=6}
+#Topics by date
+dates1<-seq(from=as.Date('2018-05-10'),to=as.Date('2019-03-20'),by='1 day')
+
+dates<-speech_df%>%
+  mutate(topic2label=ifelse(grepl("none[1-9]", topic2label, fixed=FALSE), "none", as.character(topic2label)))%>%
+  group_by(topic2label, date)%>%
+  summarise(total=n())%>%
+  filter(topic2label!="none")
+
+dates %>%
+  ggplot(aes(x=date, y=total)) +
+  geom_line() +
+  facet_wrap(~ topic2label, ncol=4)+
+  theme_minimal()+
+  ggtitle("Topics over time")+labs(y="Frequency", x="Date")
+
+#Group topics
+speech_df<-speech_df%>%
+  mutate(topicgroup=ifelse((topic2label== "Budget" | topic2label== "Economy / employment" | topic2label=="Economy / markets" |topic2label==  "Fiscal reform" | topic2label== "Taxes"), "Economy", 
+                             ifelse((topic2label=="Children / Elderly" | 
+                                       topic2label=="Education" | topic2label=="Labor" |
+                                       topic2label=="Social security" |topic2label=="Security"), "Social",
+                                    ifelse(grepl("none[1-9]", topic2label, fixed=FALSE), "none",
+                                           ifelse((topic2label=="Abortion"|topic2label== "Women / Gender"|
+                                                  topic2label=="Same sex marriage"), "Human rights",
+                                           ifelse((topic2label=="Coasts (Guanacaste)" | topic2label=="Coasts (Limón)" | topic2label=="Coasts (Puntarenas)" | topic2label=="Communities" | topic2label=="Local governments"), "Local",
+                                           ifelse((topic2label=="ICE" | topic2label=="Institutions" |
+                                          topic2label=="Judiciary" |topic2label=="Parliament"| topic2label=="Environment / Energy"), "Institutions", "Other")))))))
+
+dates2<-speech_df%>%
+  filter(topic2label!="Ivonne")%>%
+  group_by(topicgroup, date)%>%
+  summarise(total=n())%>%
+  filter(topicgroup!="none")
+
+dates2 %>%
+  filter(topicgroup!="Other")%>%
+  ggplot(aes(x=date, y=total)) +
+  geom_line() +
+  facet_wrap(~ topicgroup, ncol=1)+
+  theme_minimal()+
+  ggtitle("Topics over time")+labs(y="Frequency", x="Date")
+```
+
+#Top legislators
+```{r message=FALSE, error=FALSE, warning=FALSE}
+
+#Topics by legislators
+legislators<-speech_df%>%
+   mutate(topic2label=ifelse(grepl("none[1-9]", topic2label, fixed=FALSE), "none", as.character(topic2label)))%>%
+   filter(topic2label!="none")%>%
+  group_by(legislator, topic2label)%>%
+  summarise(total=n())%>%
+  mutate(perc=round(total/sum(total)*100, 1),
+         total_speeches=sum(total))%>%
+  #Keep those in the top quartile
+  filter(total_speeches>=14)%>%
+  mutate(maxi=max(perc),
+         color=ifelse(maxi==perc, 1, 0))%>%
+  filter(maxi>=40)
+```
+
+## Keyness analysis
+```{r}
+#Keyness
+#Create dfm just with speeches about abortion and group by party
+#Create a corpus
+abortion<-speech_df%>%
+  filter(topic2label=="Abortion" & (party=="PAC"| party=="PRN"))
+corpus2<-corpus(abortion, text_field = "speech")
+docnames(corpus2)<-paste(abortion$acta, abortion$legislator, sep="-")
+
+#dfm
+dfm2<-corpus2%>%
+    tokens(remove_punct = TRUE) %>%
+    tokens_tolower() %>%
+    tokens_remove(pattern = stopwords('spanish'), padding = FALSE)%>%
+    tokens_remove(pattern ="diputad[ao]|diputad[ao]s|señora|señor|compañer[ao]|
+                  compañer[ao]s|gracias|don|doña|presidenta", valuetype= "regex")%>%
+    dfm(groups = "party")%>%
+    #dfm_wordstem(language = "spanish")%>%
+    dfm_trim(min_docfreq = 2, 
+                      verbose = TRUE)
+
+
+tstat_key <- textstat_keyness(dfm2)
+textplot_keyness(tstat_key)
+
+#Marriage
+samesex<-speech_df%>%
+  filter(topic2label=="Same sex marriage" & (party=="PAC"| party=="PRN"))
+corpus3<-corpus(samesex, text_field = "speech")
+
+#dfm
+dfm3<-corpus3%>%
+    tokens(remove_punct = TRUE) %>%
+    tokens_tolower() %>%
+    tokens_remove(pattern = stopwords('spanish'), padding = FALSE)%>%
+    tokens_remove(pattern ="diputad[ao]|diputad[ao]s|señora|señor|compañer[ao]|
+                  compañer[ao]s|gracias|don|doña|presidenta", valuetype= "regex")%>%
+    dfm(groups = "party")%>%
+    #dfm_wordstem(language = "spanish")%>%
+    dfm_trim(min_docfreq = 2, 
+                      verbose = TRUE)
+
+
+tstat_key2 <- textstat_keyness(dfm3)
+textplot_keyness(tstat_key2)
+```
